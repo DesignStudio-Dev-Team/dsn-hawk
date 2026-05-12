@@ -3,7 +3,7 @@
  * Plugin Name:       DSN Hawk
  * Plugin URI:        https://github.com/DesignStudio-Dev-Team/dsn-hawk
  * Description:       Collects site health + configuration reports and pushes them to the DSN Skyline Laravel admin panel.
- * Version:           1.0.0
+ * Version:           1.0.1
  * Requires at least: 6.0
  * Requires PHP:      8.1
  * Author:            Juan Tamayo, DesignStudio Network
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DSN_HAWK_VERSION', '1.0.0' );
+define( 'DSN_HAWK_VERSION', '1.0.1' );
 define( 'DSN_HAWK_FILE', __FILE__ );
 define( 'DSN_HAWK_DIR', plugin_dir_path( __FILE__ ) );
 define( 'DSN_HAWK_URL', plugin_dir_url( __FILE__ ) );

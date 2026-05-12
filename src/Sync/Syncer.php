@@ -20,6 +20,17 @@ final class Syncer {
 	 * @return array{ok:bool,code:int,message:string,status:string}
 	 */
 	public function run(): array {
+		try {
+			return $this->runInternal();
+		} catch ( \Throwable $e ) {
+			return $this->record( 'error', 0, 'Sync failed: ' . $e->getMessage(), 0 );
+		}
+	}
+
+	/**
+	 * @return array{ok:bool,code:int,message:string,status:string}
+	 */
+	private function runInternal(): array {
 		$settings = Plugin::settings();
 
 		if ( empty( $settings['endpoint'] ) || empty( $settings['token'] ) ) {
@@ -31,8 +42,12 @@ final class Syncer {
 			return $this->record( 'error', 0, 'Refusing to POST to non-HTTPS endpoint.', 0 );
 		}
 
-		$executed        = [];
-		$reports_payload = $this->collectReports( (array) ( $settings['reports'] ?? [] ), $executed );
+		$executed      = [];
+		$report_errors = [];
+		$reports_payload = $this->collectReports( (array) ( $settings['reports'] ?? [] ), $executed, $report_errors );
+		if ( ! empty( $report_errors ) ) {
+			$reports_payload['_errors'] = $report_errors;
+		}
 
 		$payload = [
 			'site'    => SiteInfo::payload(),
@@ -51,7 +66,8 @@ final class Syncer {
 					// Commit failure on a single report shouldn't block the run.
 				}
 			}
-			return $this->record( 'ok', $res['code'], 'ok', $bytes );
+			$message = empty( $report_errors ) ? 'ok' : 'ok with report errors: ' . implode( '; ', array_map( static fn ( array $error ): string => $error['report'] . ': ' . $error['message'], $report_errors ) );
+			return $this->record( 'ok', $res['code'], $message, $bytes );
 		}
 
 		if ( $res['code'] === 401 ) {
@@ -70,17 +86,25 @@ final class Syncer {
 	 * @param ReportInterface[]  &$executed Populated with reports that actually contributed a slice
 	 *                                      (used for post-success cursor commits).
 	 */
-	private function collectReports( array $enabled, array &$executed ): array {
+	private function collectReports( array $enabled, array &$executed, array &$errors ): array {
 		$reports = [];
 		foreach ( $this->availableReports() as $report ) {
 			$key = $report->key();
-			if ( empty( $enabled[ $key ] ) ) {
+			try {
+				if ( empty( $enabled[ $key ] ) ) {
+					continue;
+				}
+				if ( ! $report->isAvailable() ) {
+					continue;
+				}
+				$slice = $report->collect();
+			} catch ( \Throwable $e ) {
+				$errors[] = [
+					'report'  => $key,
+					'message' => $e->getMessage(),
+				];
 				continue;
 			}
-			if ( ! $report->isAvailable() ) {
-				continue;
-			}
-			$slice = $report->collect();
 			if ( $slice !== null ) {
 				$reports[ $key ] = $slice;
 				$executed[]      = $report;

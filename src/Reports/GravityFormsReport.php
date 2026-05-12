@@ -351,7 +351,7 @@ final class GravityFormsReport implements ReportInterface {
 
 		$user_agent = (string) ( $entry['user_agent'] ?? '' );
 		if ( ! $raw_pii && $user_agent !== '' ) {
-			$user_agent = mb_substr( $user_agent, 0, 120 );
+			$user_agent = function_exists( 'mb_substr' ) ? mb_substr( $user_agent, 0, 120 ) : substr( $user_agent, 0, 120 );
 		}
 
 		$source_url = (string) ( $entry['source_url'] ?? '' );
