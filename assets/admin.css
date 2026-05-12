@@ -1,0 +1,27 @@
+.dsn-hawk-wrap .form-table th {
+	width: 220px;
+}
+
+.dsn-hawk-wrap .dsn-hawk-log {
+	margin-top: 12px;
+}
+
+.dsn-hawk-wrap .dsn-hawk-log th,
+.dsn-hawk-wrap .dsn-hawk-log td {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	vertical-align: top;
+}
+
+.dsn-hawk-wrap hr {
+	margin: 24px 0;
+	border: 0;
+	border-top: 1px solid #dcdcde;
+}
+
+.dsn-hawk-wrap .dsn-hawk-sub {
+	margin: 6px 0 6px 24px;
+	padding: 6px 10px;
+	border-left: 3px solid #dcdcde;
+	color: #2c3338;
+}

@@ -1,0 +1,22 @@
+{
+    "name": "designstudio-dev-team/dsn-hawk",
+    "description": "DSN Hawk — WordPress agent that reports to the Skyline Laravel admin.",
+    "type": "wordpress-plugin",
+    "license": "proprietary",
+    "authors": [
+        { "name": "Juan Tamayo", "homepage": "https://designstudionetwork.com" },
+        { "name": "DesignStudio Network", "homepage": "https://designstudionetwork.com" }
+    ],
+    "require": {
+        "php": ">=8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "DSN\\Hawk\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

@@ -53,8 +53,13 @@ One unified endpoint, one payload shape. Hawk sends everything it has in a singl
 ```json
 {
   "site": {
+    "name": "Example Site",
     "domain": "example.com",
     "url": "https://example.com",
+    "admin_email": "admin@example.com",
+    "wp_site_id": 1,
+    "is_multisite": false,
+    "timezone": "America/Los_Angeles",
     "server_ip": "192.0.2.10",
     "email_enabled": true
   },
@@ -66,12 +71,64 @@ One unified endpoint, one payload shape. Hawk sends everything it has in a singl
           "title": "Contact Form",
           "is_active": true,
           "total_entries_count": 42,
-          "notifications": [
-            { "to": "leads@example.com", "bcc": "archive@example.com" }
+          "fields": [
+            { "id": "1", "label": "Email", "admin_label": "", "type": "email", "is_required": true, "visibility": "visible", "inputs": [] }
           ],
-          "entries": []
+          "notifications": [
+            { "id": "abc123", "name": "Admin Notification", "is_active": true, "to": "leads@example.com", "to_type": "email", "to_field": "", "bcc": "archive@example.com", "from": "{admin_email}", "reply_to": "{Email:1}", "subject": "New submission" }
+          ],
+          "entries": [
+            {
+              "id": "100",
+              "entry_id": "100",
+              "form_id": "1",
+              "date_created": "2026-05-04 18:00:00",
+              "date_updated": "2026-05-04 18:00:00",
+              "status": "active",
+              "source_url": "https://example.com/contact",
+              "user_agent": "Mozilla/5.0...",
+              "ip": "203.0.113.0",
+              "created_by": null,
+              "is_starred": false,
+              "is_read": false,
+              "fields": [
+                { "id": "1", "field_id": "1", "label": "Email", "type": "email", "value": "sha256:...", "value_redacted": true },
+                { "id": "2", "field_id": "2", "label": "Name", "type": "name", "value": "[redacted]", "value_redacted": true }
+              ],
+              "field_values": { "1": "sha256:...", "2": "[redacted]" }
+            }
+          ],
+          "entries_meta": {
+            "mode": "incremental",
+            "cursor_before": 99,
+            "cursor_after": 100,
+            "backfilled": true,
+            "batch_size": 250,
+            "per_sync_budget": 250,
+            "returned": 1,
+            "pii_stripped": true
+          }
         }
       ]
+    },
+    "plugins": {
+      "last_update_check": 1777932000,
+      "last_update_check_at": "2026-05-04T18:00:00+00:00",
+      "plugins": [
+        { "file": "gravityforms/gravityforms.php", "slug": "gravityforms", "name": "Gravity Forms", "version": "2.9.0", "latest_version": "2.9.1", "is_active": true, "auto_update": false, "update_available": true, "update_status": "update_available", "last_modified": "2026-04-20T12:00:00+00:00", "last_updated_at": "2026-04-20T12:00:00+00:00" }
+      ]
+    },
+    "core_theme": {
+      "wordpress": {
+        "version": "6.8.1",
+        "latest": "6.8.1",
+        "update_available": false,
+        "update_status": "current",
+        "last_update_check": 1777932000,
+        "last_update_check_at": "2026-05-04T18:00:00+00:00",
+        "last_successful_update_version": "6.8.1",
+        "last_updated_at": "2026-04-30T16:30:00+00:00"
+      }
     }
   }
 }
@@ -81,8 +138,13 @@ One unified endpoint, one payload shape. Hawk sends everything it has in a singl
 
 | Field | Source |
 |---|---|
+| `name` | `get_bloginfo( 'name' )` |
 | `domain` | `parse_url(home_url(), PHP_URL_HOST)` — Skyline normalizes (strips protocol, `www.`, path) |
 | `url` | `home_url()` |
+| `admin_email` | `get_bloginfo( 'admin_email' )` |
+| `wp_site_id` | `get_current_blog_id()`; useful for multisite installs |
+| `is_multisite` | `is_multisite()` |
+| `timezone` | `wp_timezone_string()` |
 | `server_ip` | `$_SERVER['SERVER_ADDR']` (fallback: `gethostbyname($host)`) |
 | `email_enabled` | Boolean. True if WP can send mail — see **Email sending detection** below |
 
@@ -114,10 +176,25 @@ For each form returned by `GFAPI::get_forms( true /* active */ )` **and** `GFAPI
 |---|---|
 | `id` | `$form['id']` (cast to string) |
 | `title` | `$form['title']` |
+| `description` | `$form['description']` |
 | `is_active` | `! $form['is_trash'] && $form['is_active']` |
+| `is_trash` | `$form['is_trash']` |
+| `date_created`, `date_updated` | Gravity Forms form metadata when available |
 | `total_entries_count` | `GFAPI::count_entries( $form['id'] )` |
-| `notifications[]` | iterate `$form['notifications']` — extract `to` and `bcc` |
-| `entries[]` | **leave empty `[]` for v0.1** (wire up later if needed for debugging) |
+| `fields[]` | Form field schema: `id`, `label`, `admin_label`, `type`, `is_required`, `visibility`, `inputs[]` |
+| `notifications[]` | Notification metadata: `id`, `name`, `is_active`, `to`, `to_type`, `to_field`, `bcc`, `from`, `reply_to`, `subject` |
+| `entries[]` | Real Gravity Forms entries only. Each entry includes `id`, `entry_id`, `form_id`, `date_created`, `date_updated`, status/read/star metadata, normalized labeled `fields[]`, and `field_values` keyed by GF field/input ID. |
+| `entries_meta` | Cursor and batching metadata so Skyline can tell whether the site is still backfilling |
+
+Privacy mode keeps entry metadata (`id`, `entry_id`, `form_id`, `date_created`, status, read/star flags, masked IP, truncated user agent, source URL without query string) but strips or masks PII field values. Email values are hashed as `sha256:...`; name, phone, address, website, and likely PII labels are sent as `[redacted]` with `value_redacted: true`. Hawk does not create placeholder `N/A` rows; if a batch has no real entries, `entries` is an empty array.
+
+Skyline should not turn redacted values into `N/A`. Display `[redacted]` when `value_redacted` is true, show blank/unknown only for actual `null` metadata, and never create synthetic entry rows when `entries` is empty.
+
+Backfill starts with cursor `0`, sends historical entries ordered by real Gravity Forms entry ID, and only advances each form cursor after Skyline returns a 2xx response. Hawk limits each sync run to a total entry budget of 250 entries across all forms by default, so the initial push is spread across multiple syncs instead of posting every form's first 250 entries at once. Forms that did not get entry budget in a run report `entries_meta.mode: "deferred"` and will continue on a later sync. Once a short batch or empty batch confirms history is drained, Hawk marks the form backfilled and subsequent syncs continue with cursor-based new entries (`id > cursor`).
+
+Developers can tune entry batching with filters:
+- `dsn_hawk_gf_batch_size`: maximum entries pulled for one form at a time, default `250`.
+- `dsn_hawk_gf_entries_per_sync`: maximum total entries included in one sync payload across all forms, default `250`.
 
 ### Notification extraction
 
@@ -234,6 +311,69 @@ Retry strategy:
 ## Logging
 
 Own table: `{prefix}dsn_hawk_log` — columns `id, created_at, status, http_code, message, payload_bytes`. Keep last 100 runs for debugging. Shown on the settings page.
+
+---
+
+## Remote Updates Callback
+
+When DSN Hawk is installed and active, Skyline can call Hawk's update endpoint to run WordPress core and plugin updates on the site. No sync token or remote update token is required for this callback.
+
+```http
+POST https://clientsite.com/wp-json/dsn-hawk/v1/updates/run
+Content-Type: application/json
+Accept: application/json
+```
+
+Request:
+
+```json
+{
+  "dry_run": false,
+  "core": true,
+  "all_plugins": false,
+  "plugins": [
+    "gravityforms/gravityforms.php",
+    "advanced-custom-fields/acf.php"
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "dry_run": false,
+  "core": {
+    "ok": true,
+    "status": "updated",
+    "new_version": "6.8.1"
+  },
+  "plugins": {
+    "gravityforms/gravityforms.php": {
+      "ok": true,
+      "status": "updated",
+      "new_version": "2.9.1"
+    }
+  },
+  "post_update_sync": {
+    "ok": true,
+    "code": 200,
+    "message": "ok",
+    "status": "ok"
+  }
+}
+```
+
+Use `"dry_run": true` to preview what would update without changing the site. A real update call runs a fresh Hawk sync afterward so Skyline can refresh the site's core/plugin health.
+
+Set `"all_plugins": true` to update every plugin WordPress reports as having an available update. Leave `plugins` empty in that case.
+
+Behavior:
+- If DSN Hawk is not installed/active, the route will not exist.
+- The callback does not require a sync token or remote update token.
+- Hawk rejects unknown plugin files.
+- Hawk uses a short lock to prevent overlapping update runs.
 
 ---
 
