@@ -92,8 +92,8 @@ One unified endpoint, one payload shape. Hawk sends everything it has in a singl
               "is_starred": false,
               "is_read": false,
               "fields": [
-                { "id": "1", "field_id": "1", "label": "Email", "type": "email", "value": "sha256:...", "value_redacted": true },
-                { "id": "2", "field_id": "2", "label": "Name", "type": "name", "value": "[redacted]", "value_redacted": true }
+                { "id": "1", "field_id": "1", "label": "Email", "type": "email", "value": "sha256:...", "value_redacted": true, "value_truncated": false, "value_original_length": 71 },
+                { "id": "2", "field_id": "2", "label": "Name", "type": "name", "value": "[redacted]", "value_redacted": true, "value_truncated": false, "value_original_length": 10 }
               ],
               "field_values": { "1": "sha256:...", "2": "[redacted]" }
             }
@@ -103,8 +103,9 @@ One unified endpoint, one payload shape. Hawk sends everything it has in a singl
             "cursor_before": 99,
             "cursor_after": 100,
             "backfilled": true,
-            "batch_size": 250,
-            "per_sync_budget": 250,
+            "batch_size": 25,
+            "per_sync_budget": 25,
+            "field_value_max_length": 180,
             "returned": 1,
             "pii_stripped": true
           }
@@ -190,11 +191,14 @@ Privacy mode keeps entry metadata (`id`, `entry_id`, `form_id`, `date_created`, 
 
 Skyline should not turn redacted values into `N/A`. Display `[redacted]` when `value_redacted` is true, show blank/unknown only for actual `null` metadata, and never create synthetic entry rows when `entries` is empty.
 
-Backfill starts with cursor `0`, sends historical entries ordered by real Gravity Forms entry ID, and only advances each form cursor after Skyline returns a 2xx response. Hawk limits each sync run to a total entry budget of 250 entries across all forms by default, so the initial push is spread across multiple syncs instead of posting every form's first 250 entries at once. Forms that did not get entry budget in a run report `entries_meta.mode: "deferred"` and will continue on a later sync. Once a short batch or empty batch confirms history is drained, Hawk marks the form backfilled and subsequent syncs continue with cursor-based new entries (`id > cursor`).
+Each outbound field value is capped to 180 characters by default to avoid receiver database truncation errors. If Hawk truncates a value, it sends `value_truncated: true` and `value_original_length`. Store the capped `value` in short columns like `field_data`; use the flags to indicate that the original submission had more data.
+
+Backfill starts with cursor `0`, sends historical entries ordered by real Gravity Forms entry ID, and only advances each form cursor after Skyline returns a 2xx response. Hawk limits each sync run to a total entry budget of 25 entries across all forms by default, so the initial push is spread across multiple syncs instead of posting every form's first entries at once. Forms that did not get entry budget in a run report `entries_meta.mode: "deferred"` and will continue on a later sync. Once a short batch or empty batch confirms history is drained, Hawk marks the form backfilled and subsequent syncs continue with cursor-based new entries (`id > cursor`).
 
 Developers can tune entry batching with filters:
-- `dsn_hawk_gf_batch_size`: maximum entries pulled for one form at a time, default `250`.
-- `dsn_hawk_gf_entries_per_sync`: maximum total entries included in one sync payload across all forms, default `250`.
+- `dsn_hawk_gf_batch_size`: maximum entries pulled for one form at a time, default `25`.
+- `dsn_hawk_gf_entries_per_sync`: maximum total entries included in one sync payload across all forms, default `25`.
+- `dsn_hawk_gf_field_value_max_length`: maximum characters per field value, default `180`.
 
 ### Notification extraction
 

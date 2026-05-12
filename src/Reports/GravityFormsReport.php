@@ -10,7 +10,10 @@ use DSN\Hawk\Support\GravityEntriesState;
 final class GravityFormsReport implements ReportInterface {
 
 	/** Max entries pulled per form per sync run. */
-	public const BATCH_SIZE = 250;
+	public const BATCH_SIZE = 25;
+
+	/** Keep individual field values safe for typical indexed VARCHAR receiver columns. */
+	public const FIELD_VALUE_MAX_LENGTH = 180;
 
 	private const REDACTED = '[redacted]';
 
@@ -33,8 +36,10 @@ final class GravityFormsReport implements ReportInterface {
 		$settings     = Plugin::settings();
 		$include_ents = ! empty( $settings['reports']['gravity_forms_entries'] );
 		$raw_pii      = ! empty( $settings['reports']['gravity_forms_entries_pii'] );
-		$batch_size   = max( 1, (int) apply_filters( 'dsn_hawk_gf_batch_size', self::BATCH_SIZE ) );
-		$entry_budget = max( 1, (int) apply_filters( 'dsn_hawk_gf_entries_per_sync', $batch_size ) );
+		$batch_size       = max( 1, (int) apply_filters( 'dsn_hawk_gf_batch_size', self::BATCH_SIZE ) );
+		$per_sync_budget  = max( 1, (int) apply_filters( 'dsn_hawk_gf_entries_per_sync', $batch_size ) );
+		$entry_budget     = $per_sync_budget;
+		$field_value_max  = max( 20, (int) apply_filters( 'dsn_hawk_gf_field_value_max_length', self::FIELD_VALUE_MAX_LENGTH ) );
 
 		$this->pendingCommits = [];
 
@@ -81,7 +86,7 @@ final class GravityFormsReport implements ReportInterface {
 
 			$form_batch_size = min( $batch_size, $entry_budget );
 			[ $entries, $new_cursor, $backfilled, $mode ] = $include_ents && $entry_budget > 0
-				? $this->pullEntries( $id, $form, $form_batch_size, $raw_pii )
+				? $this->pullEntries( $id, $form, $form_batch_size, $raw_pii, $field_value_max )
 				: [ [], 0, true, 'disabled' ];
 
 			$state = GravityEntriesState::for( $id );
@@ -112,7 +117,8 @@ final class GravityFormsReport implements ReportInterface {
 					'cursor_after'   => $new_cursor,
 					'backfilled'     => $backfilled,
 					'batch_size'     => $batch_size,
-					'per_sync_budget' => (int) apply_filters( 'dsn_hawk_gf_entries_per_sync', $batch_size ),
+					'per_sync_budget' => $per_sync_budget,
+					'field_value_max_length' => $field_value_max,
 					'returned'       => $returned,
 					'pii_stripped'   => ! $raw_pii,
 				],
@@ -135,7 +141,7 @@ final class GravityFormsReport implements ReportInterface {
 	 * @return array{0: array, 1: int, 2: bool, 3: string}
 	 *         [entries, new_cursor, backfilled_flag, mode]
 	 */
-	private function pullEntries( int $form_id, array $form, int $batch_size, bool $raw_pii ): array {
+	private function pullEntries( int $form_id, array $form, int $batch_size, bool $raw_pii, int $field_value_max ): array {
 		$state  = GravityEntriesState::for( $form_id );
 		$cursor = (int) $state['cursor'];
 
@@ -187,7 +193,7 @@ final class GravityFormsReport implements ReportInterface {
 			}
 			$max_id = max( $max_id, $eid );
 
-			$serialized[] = $this->serializeEntry( $entry, $field_labels, $raw_pii );
+			$serialized[] = $this->serializeEntry( $entry, $field_labels, $raw_pii, $field_value_max );
 		}
 
 		// Caught up when the batch came back short.
@@ -315,7 +321,7 @@ final class GravityFormsReport implements ReportInterface {
 		return $out;
 	}
 
-	private function serializeEntry( array $entry, array $field_labels, bool $raw_pii ): array {
+	private function serializeEntry( array $entry, array $field_labels, bool $raw_pii, int $field_value_max ): array {
 		$fields = [];
 		$field_values = [];
 		foreach ( $entry as $k => $v ) {
@@ -333,6 +339,8 @@ final class GravityFormsReport implements ReportInterface {
 				[ $value, $redacted ] = $this->privacyValue( $value, (string) $meta['type'], (string) $meta['label'] );
 			}
 
+			[ $value, $truncated, $original_length ] = $this->limitFieldValue( $value, $field_value_max );
+
 			$field_values[ (string) $k ] = $value;
 			$fields[] = [
 				'id'             => (string) $k,
@@ -341,6 +349,8 @@ final class GravityFormsReport implements ReportInterface {
 				'type'           => $this->stringOrNull( $meta['type'] ?? null ),
 				'value'          => $value,
 				'value_redacted' => $redacted,
+				'value_truncated' => $truncated,
+				'value_original_length' => $original_length,
 			];
 		}
 
@@ -398,6 +408,53 @@ final class GravityFormsReport implements ReportInterface {
 		}
 
 		return [ is_scalar( $value ) && (string) $value !== '' ? self::REDACTED : $value, true ];
+	}
+
+	private function limitFieldValue( mixed $value, int $max_length ): array {
+		if ( $value === null || $value === '' ) {
+			return [ $value, false, null ];
+		}
+
+		$string_value = $this->fieldValueToString( $value );
+		$length       = $this->stringLength( $string_value );
+
+		if ( $length <= $max_length ) {
+			return [ $string_value, false, $length ];
+		}
+
+		return [
+			$this->substring( $string_value, 0, max( 0, $max_length - 15 ) ) . '...[truncated]',
+			true,
+			$length,
+		];
+	}
+
+	private function fieldValueToString( mixed $value ): string {
+		if ( is_array( $value ) ) {
+			$flat = [];
+			array_walk_recursive(
+				$value,
+				static function ( mixed $item ) use ( &$flat ): void {
+					if ( $item === null || $item === '' ) {
+						return;
+					}
+					if ( is_scalar( $item ) ) {
+						$flat[] = (string) $item;
+					}
+				}
+			);
+			return implode( ', ', $flat );
+		}
+
+		if ( is_bool( $value ) ) {
+			return $value ? 'true' : 'false';
+		}
+
+		if ( is_scalar( $value ) ) {
+			return (string) $value;
+		}
+
+		return '';
 	}
 
 	private function isPiiField( string $type, string $label ): bool {
@@ -478,6 +535,14 @@ final class GravityFormsReport implements ReportInterface {
 
 		$value = trim( (string) $value );
 		return $value !== '' ? $value : null;
+	}
+
+	private function stringLength( string $value ): int {
+		return function_exists( 'mb_strlen' ) ? mb_strlen( $value ) : strlen( $value );
+	}
+
+	private function substring( string $value, int $start, int $length ): string {
+		return function_exists( 'mb_substr' ) ? mb_substr( $value, $start, $length ) : substr( $value, $start, $length );
 	}
 
 	public function onSynced(): void {
